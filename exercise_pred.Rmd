@@ -1,0 +1,749 @@
+---
+title: "Exercise-Technique Quality Prediction"
+author: "Peter Nelson"
+date: "December 15, 2014"
+output: html_document
+---
+#### JHDS Course Assignment - Practical Machine Learning
+```{r load_libraries, echo=FALSE, warning=FALSE, include=FALSE}
+    # load libraries
+    library(pROC)
+    library(caret)
+    library(rattle)
+    library(randomForest)
+    library(klaR)
+    library(MASS)
+    library(xtable) # for xtable, obviously
+```    
+    
+```{r load_data, echo=FALSE, warning=FALSE, include=FALSE}
+    # load data
+    setwd('/Users/peter.nelson/Documents/Coursera/jhds-08-predmachlearn/predmachlearn-016')
+    training <- read.csv('data/pml-training.csv')
+    validation <- read.csv('data/pml-testing.csv')
+    
+    # data downloaded from website
+    # http://groupware.les.inf.puc-rio.br/static/WLE/WearableComputing_weight_lifting_exercises_biceps_curl_variations.csv
+    original <- read.csv('../WearableComputing_weight_lifting_exercises_biceps_curl_variations.csv')
+    
+    # first observation: there are 19622 observations of 160 variables
+    # so we're probably going to have to use PCA to get the predictor list
+    # shortened up a bit, eh?
+    
+    # we are told the output variable is Classe, the last column (160)
+    # in the dataset
+```
+
+```{r clean_data_function, echo=FALSE, warning=FALSE, include=FALSE}
+    # need function to clean data...
+    clean_exercise_data <- function(source_df) {
+      # do not include the new_window = 'yes' rows, because those are aggregate
+      df <- subset(source_df, new_window != 'yes')
+    
+      # add a new column called 'outcome' which is based on whether classe == 'A'
+      if (length(df$classe) > 0) {
+        df$outcome <- factor(x = (df$classe == 'A'), levels = c(TRUE, FALSE), labels = c('correct', 'incorrect'))
+      }
+    
+      # rows commented out don't need any adjusting
+      # rows set to NULL are being removed
+    
+      # this is a list of ALL columns
+      
+      #df$X                         <- (df$X) # note that this is just a ROW number!
+      #df$user_name                 <- (df$user_name)
+      df$raw_timestamp              <- as.POSIXct(df$raw_timestamp_part_1 + df$raw_timestamp_part_2, origin = '1970-01-01 00:00.00 UTC')
+      df$raw_timestamp_part_1       <- NULL
+      df$raw_timestamp_part_2       <- NULL
+      df$cvtd_timestamp             <- as.POSIXct(df$cvtd_timestamp, format = '%m/%d/%Y %H:%M')
+      #df$new_window                <- (df$new_window)
+      #df$num_window                <- (df$num_window)
+      #df$roll_belt                 <- (df$roll_belt)
+      #df$pitch_belt                <- (df$pitch_belt)
+      #df$yaw_belt                  <- (df$yaw_belt)
+      #df$total_accel_belt          <- (df$total_accel_belt)   # this is bimodal data
+      df$kurtosis_roll_belt         <- NULL # over 19000 NA's
+      df$kurtosis_picth_belt        <- NULL # over 19000 NA's
+      df$kurtosis_yaw_belt          <- NULL # data is all blank or DIV/0
+      df$skewness_roll_belt         <- NULL # over 19000 NA's
+      df$skewness_roll_belt.1       <- NULL # over 19000 NA's
+      df$skewness_yaw_belt          <- NULL # all blank or div/0
+      df$max_roll_belt              <- NULL # over 19000 NA's
+      df$max_picth_belt             <- NULL # over 19000 NA's
+      df$max_yaw_belt               <- NULL # over 19000 NA's
+      df$min_roll_belt              <- NULL # over 19000 NA's
+      df$min_pitch_belt             <- NULL # over 19000 NA's
+      df$min_yaw_belt               <- NULL # over 19000 NA's
+      df$amplitude_roll_belt        <- NULL # over 19000 NA's
+      df$amplitude_pitch_belt       <- NULL # over 19000 NA's
+      df$amplitude_yaw_belt         <- NULL # all blank or div/0
+      df$var_total_accel_belt       <- NULL # over 19000 NA's
+      df$avg_roll_belt              <- NULL # over 19000 NA's
+      df$stddev_roll_belt           <- NULL # over 19000 NA's
+      df$var_roll_belt              <- NULL # over 19000 NA's
+      df$avg_pitch_belt             <- NULL # over 19000 NA's
+      df$stddev_pitch_belt          <- NULL # over 19000 NA's
+      df$var_pitch_belt             <- NULL # over 19000 NA's
+      df$avg_yaw_belt               <- NULL # over 19000 NA's
+      df$stddev_yaw_belt            <- NULL # over 19000 NA's
+      df$var_yaw_belt               <- NULL # over 19000 NA's
+      #df$gyros_belt_x              <- (df$gyros_belt_x)
+      #df$gyros_belt_y              <- (df$gyros_belt_y)
+      #df$gyros_belt_z              <- (df$gyros_belt_z)
+      #df$accel_belt_x              <- (df$accel_belt_x)
+      #df$accel_belt_y              <- (df$accel_belt_y)
+      #df$accel_belt_z              <- (df$accel_belt_z)
+      #df$magnet_belt_x             <- (df$magnet_belt_x)
+      #df$magnet_belt_y             <- (df$magnet_belt_y)
+      #df$magnet_belt_z             <- (df$magnet_belt_z)
+      #df$roll_arm                  <- (df$roll_arm)
+      #df$pitch_arm                 <- (df$pitch_arm)
+      #df$yaw_arm                   <- (df$yaw_arm)
+      #df$total_accel_arm           <- (df$total_accel_arm)
+      df$var_accel_arm              <- NULL # over 19000 NA's
+      df$avg_roll_arm               <- NULL # over 19000 NA's
+      df$stddev_roll_arm            <- NULL # over 19000 NA's
+      df$var_roll_arm               <- NULL # over 19000 NA's
+      df$avg_pitch_arm              <- NULL # over 19000 NA's
+      df$stddev_pitch_arm           <- NULL # over 19000 NA's
+      df$var_pitch_arm              <- NULL # over 19000 NA's
+      df$avg_yaw_arm                <- NULL # over 19000 NA's
+      df$stddev_yaw_arm             <- NULL # over 19000 NA's
+      df$var_yaw_arm                <- NULL # over 19000 NA's
+      #df$gyros_arm_x               <- (df$gyros_arm_x)
+      #df$gyros_arm_y               <- (df$gyros_arm_y)
+      #df$gyros_arm_z               <- (df$gyros_arm_z)
+      #df$accel_arm_x               <- (df$accel_arm_x)
+      #df$accel_arm_y               <- (df$accel_arm_y)
+      #df$accel_arm_z               <- (df$accel_arm_z)
+      #df$magnet_arm_x              <- (df$magnet_arm_x)
+      #df$magnet_arm_y              <- (df$magnet_arm_y)
+      #df$magnet_arm_z              <- (df$magnet_arm_z)
+      df$kurtosis_roll_arm          <- NULL # over 19000 NA's
+      df$kurtosis_picth_arm         <- NULL # over 19000 NA's
+      df$kurtosis_yaw_arm           <- NULL # over 19000 NA's
+      df$skewness_roll_arm          <- NULL # over 19000 NA's
+      df$skewness_pitch_arm         <- NULL # over 19000 NA's
+      df$skewness_yaw_arm           <- NULL # over 19000 NA's
+      df$max_roll_arm               <- NULL # over 19000 NA's
+      df$max_picth_arm              <- NULL # over 19000 NA's
+      df$max_yaw_arm                <- NULL # over 19000 NA's
+      df$min_roll_arm               <- NULL # over 19000 NA's
+      df$min_pitch_arm              <- NULL # over 19000 NA's
+      df$min_yaw_arm                <- NULL # over 19000 NA's
+      df$amplitude_roll_arm         <- NULL # over 19000 NA's
+      df$amplitude_pitch_arm        <- NULL # over 19000 NA's
+      df$amplitude_yaw_arm          <- NULL # over 19000 NA's
+      #df$roll_dumbbell             <- (df$roll_dumbbell)
+      #df$pitch_dumbbell            <- (df$pitch_dumbbell)
+      #df$yaw_dumbbell              <- (df$yaw_dumbbell)
+      df$kurtosis_roll_dumbbell     <- NULL # over 19000 NA's
+      df$kurtosis_picth_dumbbell    <- NULL # over 19000 NA's
+      df$kurtosis_yaw_dumbbell      <- NULL # all NA's
+      df$skewness_roll_dumbbell     <- NULL # over 19000 NA's
+      df$skewness_pitch_dumbbell    <- NULL # over 19000 NA's
+      df$skewness_yaw_dumbbell      <- NULL # all NA's
+      df$max_roll_dumbbell          <- NULL # over 19000 NA's
+      df$max_picth_dumbbell         <- NULL # over 19000 NA's
+      df$max_yaw_dumbbell           <- NULL # over 19000 NA's
+      df$min_roll_dumbbell          <- NULL # over 19000 NA's
+      df$min_pitch_dumbbell         <- NULL # over 19000 NA's
+      df$min_yaw_dumbbell           <- NULL # over 19000 NA's
+      df$amplitude_roll_dumbbell    <- NULL # over 19000 NA's
+      df$amplitude_pitch_dumbbell   <- NULL # over 19000 NA's
+      df$amplitude_yaw_dumbbell     <- NULL # over 19000 NA's
+      #df$total_accel_dumbbell      <- (df$total_accel_dumbbell)
+      df$var_accel_dumbbell         <- NULL # over 19000 NA's
+      df$avg_roll_dumbbell          <- NULL # over 19000 NA's
+      df$stddev_roll_dumbbell       <- NULL # over 19000 NA's
+      df$var_roll_dumbbell          <- NULL # over 19000 NA's
+      df$avg_pitch_dumbbell         <- NULL # over 19000 NA's
+      df$stddev_pitch_dumbbell      <- NULL # over 19000 NA's
+      df$var_pitch_dumbbell         <- NULL # over 19000 NA's
+      df$avg_yaw_dumbbell           <- NULL # over 19000 NA's
+      df$stddev_yaw_dumbbell        <- NULL # over 19000 NA's
+      df$var_yaw_dumbbell           <- NULL # over 19000 NA's
+      #df$gyros_dumbbell_x          <- (df$gyros_dumbbell_x)
+      #df$gyros_dumbbell_y          <- (df$gyros_dumbbell_y)
+      #df$gyros_dumbbell_z          <- (df$gyros_dumbbell_z)
+      #df$accel_dumbbell_x          <- (df$accel_dumbbell_x)
+      #df$accel_dumbbell_y          <- (df$accel_dumbbell_y)
+      #df$accel_dumbbell_z          <- (df$accel_dumbbell_z)
+      #df$magnet_dumbbell_x         <- (df$magnet_dumbbell_x)
+      #df$magnet_dumbbell_y         <- (df$magnet_dumbbell_y)
+      #df$magnet_dumbbell_z         <- (df$magnet_dumbbell_z)
+      #df$roll_forearm              <- (df$roll_forearm)
+      #df$pitch_forearm             <- (df$pitch_forearm)
+      #df$yaw_forearm               <- (df$yaw_forearm)
+      df$kurtosis_roll_forearm      <- NULL # over 19000 NA's
+      df$kurtosis_picth_forearm     <- NULL # over 19000 NA's
+      df$kurtosis_yaw_forearm       <- NULL # all NA's
+      df$skewness_roll_forearm      <- NULL # over 19000 NA's
+      df$skewness_pitch_forearm     <- NULL # over 19000 NA's
+      df$skewness_yaw_forearm       <- NULL # all NA's
+      df$max_roll_forearm           <- NULL # over 19000 NA's
+      df$max_picth_forearm          <- NULL # over 19000 NA's
+      df$max_yaw_forearm            <- NULL # over 19000 NA's
+      df$min_roll_forearm           <- NULL # over 19000 NA's
+      df$min_pitch_forearm          <- NULL # over 19000 NA's
+      df$min_yaw_forearm            <- NULL # over 19000 NA's
+      df$amplitude_roll_forearm     <- NULL # over 19000 NA's
+      df$amplitude_pitch_forearm    <- NULL # over 19000 NA's
+      df$amplitude_yaw_forearm      <- NULL # over 19000 NA's
+      #df$total_accel_forearm       <- (df$total_accel_forearm)
+      df$var_accel_forearm          <- NULL # over 19000 NA's
+      df$avg_roll_forearm           <- NULL # over 19000 NA's
+      df$stddev_roll_forearm        <- NULL # over 19000 NA's
+      df$var_roll_forearm           <- NULL # over 19000 NA's
+      df$avg_pitch_forearm          <- NULL # over 19000 NA's
+      df$stddev_pitch_forearm       <- NULL # over 19000 NA's
+      df$var_pitch_forearm          <- NULL # over 19000 NA's
+      df$avg_yaw_forearm            <- NULL # over 19000 NA's
+      df$stddev_yaw_forearm         <- NULL # over 19000 NA's
+      df$var_yaw_forearm            <- NULL # over 19000 NA's
+      #df$gyros_forearm_x           <- (df$gyros_forearm_x)
+      #df$gyros_forearm_y           <- (df$gyros_forearm_y)
+      #df$gyros_forearm_z           <- (df$gyros_forearm_z)
+      #df$accel_forearm_x           <- (df$accel_forearm_x)
+      #df$accel_forearm_y           <- (df$accel_forearm_y)
+      #df$accel_forearm_z           <- (df$accel_forearm_z)
+      #df$magnet_forearm_x          <- (df$magnet_forearm_x)
+      #df$magnet_forearm_y          <- (df$magnet_forearm_y)
+      #df$magnet_forearm_z          <- (df$magnet_forearm_z)
+      #df$classe                    <- (df$classe)
+    
+      return(df)
+    }
+```
+
+```{r split_data, echo=FALSE, warning=FALSE, include=FALSE}
+    # split training into training/validation sets
+    set.seed(123123)
+    inTrain <- createDataPartition(y = training$classe, p = 0.60, list = FALSE)  # 60% of data to train, the rest to test
+    traindf <- clean_exercise_data(training[ inTrain, ])
+    testdf  <- clean_exercise_data(training[-inTrain, ])
+    validdf <- clean_exercise_data(validation)
+    origdf  <- clean_exercise_data(original)
+```
+    
+```{r set_predictors, echo=FALSE, warning=FALSE, include=FALSE}
+    # make lists of predictor variable indexes
+    non_predictors <- c('classe', 'outcome', 'raw_timestamp', 'user_name', 'cvtd_timestamp', 'new_window', 'problem_id', 'X', 'num_window')
+    pred_idx <- !(names(traindf) %in% non_predictors) # good for traindf and testdf, both
+    pred_idx_validation <- !(names(validdf) %in% non_predictors) # needed because column set is different from training set
+    pred_idx_original <-  !(names(origdf) %in% non_predictors) # needed because training column set is different from original data column set
+```
+
+```{r training_function, echo=FALSE, warning=FALSE, include=FALSE}
+    #########################################################
+    ## FUNCTION TO PERFORM VARIOUS ANALYSIS
+    ## AND RETURN RESULTS. SPECIFY THE TRAINING METHOD TO USE
+    
+    training_trial <- function(train_method, preprocess_method, pca_threshold, cv_folds, cv_repeats, holdout_username) {
+    
+        train_nonhouser <- subset(rbind(traindf, testdf), user_name != holdout_username)
+            test_houser <- subset(rbind(traindf, testdf), user_name == holdout_username)
+    
+        # nullify all computed results
+        fito <- NULL
+        fitc <- NULL
+    
+        fito_nonhouser <- NULL
+        fitc_nonhouser <- NULL
+    
+        outcome_training_cm <- NULL
+        outcome_testing_cm <- NULL
+        outcome_training_sensitivity <- NULL
+        outcome_testing_sensitivity <- NULL
+    
+        outcome_training_nonhouser_cm <- NULL
+        outcome_testing_houser_cm <- NULL
+        outcome_training_nonhouser_sensitivity <- NULL
+        outcome_testing_houser_sensitivity <- NULL
+    
+        classe_training_correctlydone_cm <- NULL
+        classe_testing_correctlydone_cm <- NULL
+        classe_training_correctlydone_sensitivity <- NULL
+        classe_testing_correctlydone_sensitivity <- NULL
+    
+        classe_training_nonhouser_correctlydone_cm <- NULL
+        classe_testing_houser_correctlydone_cm <- NULL
+        classe_training_nonhouser_correctlydone_sensitivity <- NULL
+        classe_testing_houser_correctlydone_sensitivity <- NULL
+    
+        # special case when doing logistic regression, because it cannot do the classe predictions
+        if (train_method == 'lr') {
+            # first run test on outcome, using all user_name's and randomized training/testing division
+            set.seed(1232321)
+            fito <- NULL
+            fito <- train(traindf$outcome ~ .,
+                        data = traindf[, pred_idx],
+                        method = 'glm',
+                        family = 'binomial',
+                        preProces = preprocess_method,
+                        trControl = trainControl(method = "repeatedcv", number = cv_folds, repeats = cv_repeats, preProcOptions = list(thresh = pca_threshold)))
+    
+            predo_train <- predict(fito, traindf[, pred_idx])
+             predo_test <- predict(fito,  testdf[, pred_idx])
+    
+            outcome_training_cm <- confusionMatrix(traindf$outcome, predo_train)
+             outcome_testing_cm <- confusionMatrix( testdf$outcome,  predo_test)
+            outcome_training_sensitivity <- outcome_training_cm$byClass[['Sensitivity']]
+             outcome_testing_sensitivity <-  outcome_testing_cm$byClass[['Sensitivity']]
+    
+    
+            # now run test on outcome, training on all users_names other than houser, and testing on houser
+            set.seed(1232321)
+            fito_nonhouser <- NULL
+            fito_nonhouser <- train(train_nonhouser$outcome ~ .,
+                        data = train_nonhouser[, pred_idx],
+                        method = 'glm',
+                        family = 'binomial',
+                        preProcess = preprocess_method,
+                        trControl = trainControl(method = "repeatedcv", number = cv_folds, repeats = cv_repeats, preProcOptions = list(thresh = pca_threshold)))
+    
+            predo_train_nonhouser <- predict(fito_nonhouser, train_nonhouser[, pred_idx])
+                predo_test_houser <- predict(fito_nonhouser,     test_houser[, pred_idx])
+    
+            outcome_training_nonhouser_cm <- confusionMatrix(train_nonhouser$outcome, predo_train_nonhouser)
+                outcome_testing_houser_cm <- confusionMatrix(    test_houser$outcome,     predo_test_houser)
+            outcome_training_nonhouser_sensitivity <- outcome_training_nonhouser_cm$byClass[['Sensitivity']]
+                outcome_testing_houser_sensitivity <-     outcome_testing_houser_cm$byClass[['Sensitivity']]
+        }
+    
+    
+        # for all other methods besides 'lm', just do this...
+        else {
+    
+            # first run test on outcome, using all user_name's and randomized training/testing division
+            set.seed(1232321)
+            fito <- NULL
+            fito <- train(traindf$outcome ~ .,
+                        data = traindf[, pred_idx],
+                        method = train_method,
+                        preProcess = c(preprocess_method),
+                        trControl = trainControl(method = "repeatedcv", number = cv_folds, repeats = cv_repeats, preProcOptions = list(thresh = pca_threshold)))
+    
+            predo_train <- predict(fito, traindf[, pred_idx])
+             predo_test <- predict(fito,  testdf[, pred_idx])
+    
+            outcome_training_cm <- confusionMatrix(traindf$outcome, predo_train)
+             outcome_testing_cm <- confusionMatrix( testdf$outcome,  predo_test)
+            outcome_training_sensitivity <- outcome_training_cm$byClass[['Sensitivity']]
+             outcome_testing_sensitivity <-  outcome_testing_cm$byClass[['Sensitivity']]
+    
+    
+            # now run test on outcome, training on all users_names other than houser, and testing on houser
+            set.seed(1232321)
+            fito_nonhouser <- NULL
+            fito_nonhouser <- train(train_nonhouser$outcome ~ .,
+                        data = train_nonhouser[, pred_idx],
+                        method = train_method,
+                        preProcess = preprocess_method,
+                        trControl = trainControl(method = "repeatedcv", number = cv_folds, repeats = cv_repeats, preProcOptions = list(thresh = pca_threshold)))
+    
+            predo_train_nonhouser <- predict(fito_nonhouser, train_nonhouser[, pred_idx])
+                predo_test_houser <- predict(fito_nonhouser,     test_houser[, pred_idx])
+    
+            outcome_training_nonhouser_cm <- confusionMatrix(train_nonhouser$outcome, predo_train_nonhouser)
+                outcome_testing_houser_cm <- confusionMatrix(    test_houser$outcome,     predo_test_houser)
+            outcome_training_nonhouser_sensitivity <- outcome_training_nonhouser_cm$byClass[['Sensitivity']]
+                outcome_testing_houser_sensitivity <-     outcome_testing_houser_cm$byClass[['Sensitivity']]
+    
+    
+            # now run test on classe, using all user_name's and randomized training/testing division
+            set.seed(1232321)
+            fitc <- NULL
+            fitc <- train(traindf$classe ~ .,
+                        data = traindf[, pred_idx],
+                        method = train_method,
+                        preProcess = preprocess_method,
+                        trControl = trainControl(method = "repeatedcv", number = cv_folds, repeats = cv_repeats, preProcOptions = list(thresh = pca_threshold)))
+    
+            predc_train <- predict(fitc, traindf[, pred_idx])
+             predc_test <- predict(fitc,  testdf[, pred_idx])
+    
+            classe_training_correctlydone_cm <- confusionMatrix(traindf$classe, predc_train)
+            classe_testing_correctlydone_cm  <- confusionMatrix( testdf$classe,  predc_test)
+    
+            classe_training_correctlydone_sensitivity <- sum(traindf$classe == 'A' & predc_train == 'A') / sum(traindf$classe == 'A')
+             classe_testing_correctlydone_sensitivity <- sum( testdf$classe == 'A' &  predc_test == 'A') / sum( testdf$classe == 'A')
+    
+            # finally, run test on classe, training on all users_names other than houser, and testing on houser
+            set.seed(1232321)
+            fitc_nonhouser <- NULL
+            fitc_nonhouser <- train(train_nonhouser$classe ~ .,
+                        data = train_nonhouser[, pred_idx],
+                        method = train_method,
+                        preProcess = preprocess_method,
+                        trControl = trainControl(method = "repeatedcv", number = cv_folds, repeats = cv_repeats, preProcOptions = list(thresh = pca_threshold)))
+    
+            predc_train_nonhouser <- predict(fitc_nonhouser, train_nonhouser[, pred_idx])
+                predc_test_houser <- predict(fitc_nonhouser,     test_houser[, pred_idx])
+    
+            classe_training_nonhouser_correctlydone_cm <- confusionMatrix(train_nonhouser$classe, predc_train_nonhouser)
+                classe_testing_houser_correctlydone_cm <- confusionMatrix(    test_houser$classe,     predc_test_houser)
+    
+            classe_training_nonhouser_correctlydone_sensitivity <- sum(train_nonhouser$classe == 'A' & predc_train_nonhouser == 'A') / sum(train_nonhouser$classe == 'A')
+                classe_testing_houser_correctlydone_sensitivity <- sum(    test_houser$classe == 'A' &     predc_test_houser == 'A') / sum(    test_houser$classe == 'A')
+        }
+    
+        # return all those values
+        return_val <- list(method = train_method,
+    
+                           fit_random_outcome   = fito,
+                           fit_random_classe    = fitc,
+                           fit_nonhouser_outcome = fito_nonhouser,
+                           fit_nonhouser_classe  = fitc_nonhouser,
+    
+                           outcome_training_cm  = outcome_training_cm,
+                           outcome_testing_cm   = outcome_testing_cm,
+                           outcome_training_sensitivity = outcome_training_sensitivity,
+                           outcome_testing_sensitivity  = outcome_testing_sensitivity,
+    
+                           outcome_training_nonhouser_cm          = outcome_training_nonhouser_cm,
+                           outcome_testing_houser_cm              = outcome_testing_houser_cm,
+                           outcome_training_nonhouser_sensitivity = outcome_training_nonhouser_sensitivity,
+                           outcome_testing_houser_sensitivity     = outcome_testing_houser_sensitivity,
+    
+                           classe_training_correctlydone_cm          = classe_training_correctlydone_cm,
+                           classe_testing_correctlydone_cm           = classe_testing_correctlydone_cm,
+                           classe_training_correctlydone_sensitivity = classe_training_correctlydone_sensitivity,
+                           classe_testing_correctlydone_sensitivity  = classe_testing_correctlydone_sensitivity,
+    
+                           classe_training_nonhouser_correctlydone_cm          = classe_training_nonhouser_correctlydone_cm,
+                           classe_testing_houser_correctlydone_cm              = classe_testing_houser_correctlydone_cm,
+                           classe_training_nonhouser_correctlydone_sensitivity = classe_training_nonhouser_correctlydone_sensitivity,
+                           classe_testing_houser_correctlydone_sensitivity     = classe_testing_houser_correctlydone_sensitivity
+                        )
+    }
+```
+
+```{r print_summary_function, echo=FALSE, warning=FALSE, include=FALSE}
+    var_as_pct <- function(list_name, var_name) {
+        x = list_name[[var_name]]
+        paste0(var_name, ' = ', round(100 * as.numeric(x)), '%')
+    }
+    
+    summarize_results <- function(title, train_results) {
+        # testing: train_results <- knn_results
+        print(title)
+        print('--------------------')
+        print(var_as_pct(train_results, 'outcome_training_sensitivity'))
+        print(var_as_pct(train_results, 'outcome_testing_sensitivity'))
+        print(var_as_pct(train_results, 'outcome_testing_houser_sensitivity'))
+        if (!is.null(train_results[['classe_training_correctlydone_sensitivity']]) > 0) {
+            print(var_as_pct(train_results, 'classe_training_correctlydone_sensitivity'))
+            print(var_as_pct(train_results, 'classe_testing_correctlydone_sensitivity'))
+            print(var_as_pct(train_results, 'classe_testing_houser_correctlydone_sensitivity'))
+        }
+    }
+```
+
+```{r run_trials, echo=FALSE, warning=FALSE, include=FALSE}
+    # these take a long time to run...
+    # don't leave these uncommented, lest they accidentally start and overwrite
+    # something that took an hour to build
+    
+    #lr_results <- training_trial('lr', c('pca'), 0.95, 10, 1, 'pedro')
+    #lr_nopca_results <- training_trial('lr', c('center', 'scale'), 0.95, 10, 1, 'pedro')
+    
+    #knn_results <- training_trial('knn', c('pca'), 0.95, 10, 1, 'pedro')
+    #knn_nopca_results <- training_trial('knn', c('center', 'scale'), 0.95, 10, 1, 'pedro')
+    #knn_results_th80 <- training_trial('knn', c('pca'), 0.80, 10, 1, 'pedro')
+    #knn_results_th90 <- training_trial('knn', c('pca'), 0.90, 10, 1, 'pedro')
+    #knn_results_th98 <- training_trial('knn', c('pca'), 0.98, 10, 1, 'pedro')
+    #knn_results_n10r1 <- training_trial('knn', c('pca'), 0.95, 10, 1, 'pedro')
+    #knn_results_n100r1 <- training_trial('knn', c('pca'), 0.95, 100, 1, 'pedro')
+    #knn_results_n5r1 <- training_trial('knn', c('pca'), 0.95, 5, 1, 'pedro')
+    #knn_results_n10r3 <- training_trial('knn', c('pca'), 0.95, 10, 3, 'pedro')
+    #knn_results_n250r1 <- training_trial('knn', c('pca'), 0.95, 250, 1, 'pedro')
+    
+    #nb_results <- training_trial('nb', c('pca'), 0.95, 10, 1, 'pedro')
+    #nb_nopca_results <- training_trial('nb', c('center', 'scale'), 0.95, 10, 1, 'pedro')
+    
+    #nnet_results <- training_trial('nnet', c('pca'), 0.95, 10, 1, 'pedro')
+    #nnet_nopca_results <- training_trial('nnet', c('center', 'scale'), 0.95, 10, 1, 'pedro')
+    
+    #rpart_results <- training_trial('rpart', c('pca'), 0.95, 10, 1, 'pedro')
+    #rpart_nopca_results <- training_trial('rpart', c('center', 'scale'), 0.95, 10, 1, 'pedro')
+    
+    #svmL_results         <- training_trial('svmLinear', c('pca'), 0.95, 10, 1, 'pedro')
+    #svmL_pedro_results   <- training_trial('svmLinear', c('pca'), 0.95, 10, 1, 'pedro')  # test - this should be identical to svmL_results
+    #svmL_charles_results <- training_trial('svmLinear', c('pca'), 0.95, 10, 1, 'charles')
+    #svmL_jeremy_results  <- training_trial('svmLinear', c('pca'), 0.95, 10, 1, 'jeremy')
+    #bad: svmP_results <- training_trial('svmPoly', c('pca'), 0.95, 10, 1, 'pedro')  # this ran for over 2 hours without completion
+    
+    ## TO TRY OVERNIGHT
+    
+    #bad: ada_results      <- training_trial('ada'              , c('pca'), 0.95, 10, 1, 'pedro')
+    #bad: bag_results      <- training_trial('bag'              , c('pca'), 0.95, 10, 1, 'pedro')
+    #bad: glmboost         <- training_trial('glmboost'         , c('pca'), 0.95, 10, 1, 'pedro')
+    
+    #bad: svmRadialWeights <- training_trial('svmRadialWeights' , c('pca'), 0.95, 10, 1, 'pedro')
+    #bad: lssvmLinear      <- training_trial('lssvmLinear'      , c('pca'), 0.95, 10, 1, 'pedro')
+    # ran overnight, and never finished! svmP_results     <- training_trial('svmPoly'          , c('pca'), 0.95, 10, 1, 'pedro')
+    
+    #treebag          <- training_trial('treebag'          , c('pca'), 0.95, 10, 1, 'pedro')  # made 514MB object!
+    
+    #kknn_results      <- training_trial('kknn'             , c('pca'), 0.95, 10, 1, 'pedro')
+    #kknn_charles     <- training_trial('kknn'             , c('pca'), 0.95, 10, 1, 'charles')
+    #kknn_jeremy      <- training_trial('kknn'             , c('pca'), 0.95, 10, 1, 'jeremy')
+    #kknn_eurico      <- training_trial('kknn'             , c('pca'), 0.95, 10, 1, 'eurico')
+    #kknn_n10r3       <- training_trial('kknn'             , c('pca'), 0.95, 10, 3, 'pedro')
+    #kknn_n25r3       <- training_trial('kknn'             , c('pca'), 0.95, 25, 3, 'pedro')
+
+    #kknn_results     <- training_trial('kknn'             , c('pca'), 0.95, 10, 1, 'pedro')
+    #kknn_charles     <- training_trial('kknn'             , c('pca'), 0.95, 10, 1, 'charles')
+    #rf_charles     <- training_trial('rf'             , c('pca'), 0.95, 10, 1, 'charles')
+    #rf_pedro       <- training_trial('rf'             , c('pca'), 0.95, 10, 1, 'pedro')
+    #rf_eurico      <- training_trial('rf'             , c('pca'), 0.95, 10, 1, 'eurico')
+    #rf_eurico2     <- training_trial('rf'             , c('pca'), 0.95, 10, 1, 'eurico')
+    #nb_results    <- training_trial('nb'             , c('pca'), 0.95, 10, 1, 'pedro')
+    #nnet_results <- training_trial('nnet', c('pca'), 0.95, 10, 1, 'pedro')
+    #rpart_nopca_results <- training_trial('rpart', c('center', 'scale'), 0.95, 10, 1, 'pedro')
+    #knn_results <- training_trial('knn', c('pca'), 0.95, 10, 1, 'pedro')
+    #svmL_results         <- training_trial('svmLinear', c('pca'), 0.95, 10, 1, 'pedro')
+```
+
+```{r summarize_results, echo=FALSE, warning=FALSE, include=FALSE}
+    # summarize_results('Bagged CART', treebag)
+    # 
+    # summarize_results('K Nearest Neighbors (alternate), 10 folds, 1 repeat, Pedro', kknn_results)
+    # summarize_results('K Nearest Neighbors (alternate), 10 folds, 3 repeats, Pedro', kknn_n10r3)
+    # summarize_results('K Nearest Neighbors (alternate), 25 folds, 3 repeats, Pedro', kknn_n25r3)
+    # 
+    # summarize_results('K Nearest Neighbors (alternate), Pedro'  , kknn_results)
+    # summarize_results('K Nearest Neighbors (alternate), Charles', kknn_charles)
+    # summarize_results('K Nearest Neighbors (alternate), Jeremy' , kknn_jeremy)
+    # summarize_results('K Nearest Neighbors (alternate), Eurico' , kknn_eurico)
+    # 
+    # summarize_results('Support Vector Machine - Linear', svmL_results)
+    # summarize_results('Support Vector Machine - Linear (pedro)', svmL_pedro_results)
+    # summarize_results('Support Vector Machine - Linear (charles)', svmL_charles_results)
+    # summarize_results('Support Vector Machine - Linear (jeremy)', svmL_jeremy_results)
+    # 
+    # summarize_results('logistic regression', lr_results)
+    # summarize_results('logistic regression (no PCA)', lr_nopca_results)
+    # 
+    # summarize_results('k-nearest-neighbor (80% PCA)', knn_results_th80)
+    # summarize_results('k-nearest-neighbor (80% PCA)', knn_results_th90)
+    # summarize_results('k-nearest-neighbor (95% PCA), 10folds, 1repeat', knn_results)
+    # summarize_results('k-nearest-neighbor (98% PCA)', knn_results_th98)
+    # summarize_results('k-nearest-neighbor (no PCA)', knn_nopca_results)
+    # summarize_results('k-nearest-neighbor, 10folds, 1repeat', knn_results_n10r1) # s/b same as knn_results
+    # summarize_results('k-nearest-neighbor, 100folds, 1repeat', knn_results_n100r1)
+    # summarize_results('k-nearest-neighbor (95% PCA), 5folds, 1repeat', knn_results_n5r1)
+    # summarize_results('k-nearest-neighbor (95% PCA), 10folds, 3repeats', knn_results_n10r3)
+    # summarize_results('k-nearest-neighbor (95% PCA), 250folds, 1repeats', knn_results_n250r1)
+    # 
+    # summarize_results('naive Bayes (no PCA)', nb_nopca_results)
+    # summarize_results('CART (no PCA)', rpart_nopca_results) # rpart with PCA gives bogus results (two categories only)
+    # 
+    # summarize_results('neural network (no PCA)', nnet_nopca_results)
+```
+
+```{r train_best_model, echo=FALSE, warning=FALSE, include=FALSE}
+  rf_charles <- NULL
+  rf_charles3 <- NULL
+
+  # using some home-grown caching, as these take literally hours to run
+  # rf_charles <- training_trial('rf', c('pca'), 0.95, 10, 1, 'charles')
+  # rf_charles3 <- training_trial('rf', c('pca'), 0.95, 10, 3, 'charles')
+  # save(list = c('rf_charles') , file = './data/rf_charles.Rdata' , compress = TRUE)
+  # save(list = c('rf_charles3'), file = './data/rf_charles3.Rdata', compress = TRUE)
+
+  load(file = './data/rf_charles.Rdata' )
+  load(file = './data/rf_charles3.Rdata')
+```
+
+<br>
+<br>
+<br>
+
+# Abstract
+
+The motivation behind this data collection is to develop exercise monitors for automated, real-time feedback on weight-lifting activity quality. To this end, activity monitors were used during directed, supervised curling exercises. Accelerometer measurements were taken for five categories: correct use, plus four common mistakes - lifting or lowering the dumbell only half way, and throwing the elbows or hips.
+
+Given this training data set, our specific goal is to build a model to identify, from body-position accelerometer metrics alone, which exercise category was exhibited. Additionally, we are to supply predictions for a small validation dataset of twenty observations (the so-called testing data from the instructions). See the conclusion.
+
+<br>
+
+# Executive Summary
+
+Within the given dataset, it is possibly to correctly categorize curling weight-lifting technique in over 97% of cases. However, this data is highly specific to five individuals, and does not generalize well. Unfortunately, correct idenfitication to users _outside_ the training set is achieved in only about half of the predictions. Possibly this could be resolved with many more users' trial observations. On the other hand, if the system were made to be trainable to specific individuals, it could be over 97% accurate. This would have the added benefit of facilitating alternative definitions of 'correct performance' for subjects with special needs.
+
+<br>
+<br>
+<br>
+
+# Methodology
+
+## Variable Selection
+
+This dataset is defined alternatively by both rows and columns, making it necessary to perform a fair amount of data cleanup before use. Data is segmented in rows by user_name and also num_window. Window summaries are provided in columns dedicated to that purpose, which have no values outside rows where new_window = 'yes'. Machine learing trials were performed using only the window-aggregate data, versus only the window-detail data, and no significant difference was found. Furthermore, the test-set data does not include aggregates, but detail only.
+
+Therefore, the strategy used was to discard all aggregation data. Specifically discarded were rows having new_window = 'yes', and all columns prefixed with one of the following terms: kurtosis_, skewness_, min_, max_, avg_, var_, stddev_, amplitude_
+
+Of what remained, the following columns were also discarded as not useful for prediction: user_name (an identifier), num_window (an identifier), problem_id (an identifier), new_window (a row type indicator), X (row number), raw_timestamp_part_1, raw_timestamp_part_2 and cvtd_timestamp. 
+
+All remaining variables are accelerometer measurements. They were converted to numeric type (if necessary) and used as predictors in the machine learning algorithms.
+
+The outcome variable for prediction is 'classe', which takes a value from A to E: 
+
+*  A. exactly according to the specification
+*  B. throwing the elbows to the front
+*  C. lifting the dumbbell only halfway
+*  D. lowering the dumbbell only halfway
+*  E. throwing the hips to the front
+
+## Model Design
+
+The basic approach was as follows:
+
+1. Break the 'training' dataset into two halves, 60% to train, and 40% to test.
+2. Train the model to predict simple binary outcome of correct (classe = A) versus incorrect (classe != A)
+3. Apply that model to the test set, and report the Sensitivity.
+4. Train the model to predict the actual class. That is, to predict any of the five classes rather than just correct/incorrect (A versus not-A).
+5. Apply that model to the test set, and report the Sensitivity for just classe = A (exercise performed correctly). Specifically, compute the percentage of correctly predicted classe = A observations, out of the entire set of actual classe = A observations.
+6. Create a subset of train data for all observations except one user_name, and create a subset of test data for only the observations of that user_name.
+7. Using the two models built in steps #2 and #4 compute Sensitivity for correct/incorrect exercise performance, and compute Sensitivity for classe = A alone in a multinomial classification model.
+
+Multiple machine learning algorithms were tested, as well as multiple cross-validation and pre-processing parameters. 
+
+Cross-validation was performed using the caret package's built-in functionality. Both basic cross-validation, and repeated cross-validation were used. In addition, a manual train/test (60/40%) split was utilized, as described above.
+
+## User holdouts
+
+When not considering performance on out-of-sample users, many model techniques performed with remarkably accuracy, often 99% or better on the test data. This level of performace raised suspicions that the model was simply memorizing too much train data, from which the test data did not substantially differ. That suggested the approach of holding out one user from the train data and modeling that single user in the test data. Performance on these holdout users was often so poor as to discredit a model entirely.
+
+## Modeling methods attempted
+
+Here is a list of the various machine learning algorithms tried, with caret: Logistic Regression (binary correct/incorrect only) using 'glm' and 'binomial'. K nearest neighbor, both 'knn' and 'kknn' variations. CART both regular and bagged, using 'rpart' and 'treebag'. Naive Bayes, using 'nb'. Linear Support Vector Machine, using 'svmLinear'. And a Neural Network, using 'nnet'. Most successful was Random Forest, using 'rf'.
+
+For the more successful models, different levels of repeated cross validation were performed. As were different degrees of Principal Component Analysis.
+
+## Model Selected
+
+The Random Forest model was clearly superior to the rest. It was remarkably accurate on the test/train set, and also the most accurate on the single-user holdout tests. Cross-validation of 10 folds and 1 repeat was ultimately chosen, as multiple repeats were no more accurate (see output, below). Also, the standard PCA pre-processing parameter of retaining 95% variance was found to be best.
+
+_For a exhaustive list, see the exercise_pred.Rmd file, in comments._
+
+Here is sample output for two of the models tested.
+
+```{r summarize_best_result, echo=TRUE, warning=FALSE}
+  # rf_charles <- training_trial('rf', c('pca'), 0.95, 10, 1, 'charles')  # these take hours to run, so 
+  # rf_charles3 <- training_trial('rf', c('pca'), 0.95, 10, 3, 'charles') # they are cached, and read from disk.
+  summarize_results('Random Forest (holdout-user = charles), PCA = 95%, repeatedcv = 10 folds 1 repeat', rf_charles)
+  summarize_results('Random Forest (holdout-user = charles), PCA = 95%, repeatedcv = 10 folds 3 repeat', rf_charles3)
+```
+
+<br>
+<br>
+<br>
+
+# Conclusion
+
+## Expectation for out-of-sample prediction accuracy
+
+As described in the Model Design section, a separate test set was made from a 60/40% split of the supplied training data. Model performance was trained on 60% of the data and checked against the remaining 40%.
+
+Specifically, the final model's OOB _estimate_ of error rate is 3.27%. 
+
+This coincides closely with the _actual_ observed accuracy on the testing data of 97% (confidence interval 96.6% - 97.4%).
+
+Having said that, this would only be correct if the validation data were obtained from the same set of users as the original training data. As described in the Model Design section, this model does much worse when applied to a user missing from the original training data.
+
+```{r oob_estimate, echo=TRUE}
+  rf_charles[['fit_random_classe']]$finalModel
+  rf_charles[['classe_testing_correctlydone_cm']]
+```
+
+<br>
+<br>
+<br>
+
+## Validation Set Predictions
+
+Here are the twenty problem_id's and my model's predictions.
+
+```{r validation_predictions, results='asis', echo=FALSE}
+  model_fit <- rf_charles[['fit_random_classe']]
+  validation_predictions <- predict(model_fit, validdf[, pred_idx_validation])
+  validation_output <- rbind(problem_id = sprintf('%02i', validdf[, 'problem_id']), classe = as.character(validation_predictions))
+```
+
+```{r validation_output, results='asis', echo=FALSE}
+    options(xtable.comment = FALSE)
+    options(xtable.booktabs = TRUE)
+    print(xtable(validation_output, 
+                 caption = "Validation Data Predictions",
+                 align = c('l', rep('c', ncol(validation_output)))),   #left most column is rowname, so left-align it, others all center
+          include.colnames = FALSE, 
+          type = 'html')
+```
+
+Note that the course assignment calls these the 'test data', although I consider them 'validation data.' 
+
+<br>
+<br>
+<br>
+<br>
+<br>
+<br>
+<br>
+<br>
+<br>
+
+# Appendix - Confusion Matrices & User Holdouts
+
+Careful consideration of these confusion matrices should make it very clear that model performance is excellent for use on users that have already been trained, but really quite poor when applied to a user hitherto unknown.
+
+### Correct/Incorrect prediction, random 60/40 split
+
+Using a typical 60/40 random split on the training dataset, the model was trained for simple correct/incorrect classification. That is, for classe = A versus classe != A. Here is the confusion matrix for that model, as applied to the test data.
+
+```{r outcome_testing_cm1, results='asis', echo=FALSE}
+    options(xtable.comment = FALSE)
+    options(xtable.booktabs = TRUE)
+
+    cm1 <- rf_charles[['outcome_testing_cm']]
+    print(xtable(cm1$table), type = 'html')
+```
+
+### Classe prediction, random 60/40 split
+
+Again using a typical 60/40 random split on the training dataset, but in this case the model was trained for actual classe prediction, all values A-E. Here is the confusion matrix for that model, as applied to the test data.
+
+```{r outcome_testing_cm2, results='asis', echo=FALSE}
+    options(xtable.comment = FALSE)
+    options(xtable.booktabs = TRUE)
+
+    cm2 <- rf_charles[['classe_testing_correctlydone_cm']]
+    print(xtable(cm2$table), type = 'html')
+```
+
+### Correct/Incorrect prediction, holdout one user
+
+In addition to the typical 60/40 random split, all observations for one user, Charles, were excluded from the training set. All observations except that one user, Charles, were excluded from the testing set. In this way an idea was obtained of the error when this model predicted users hitherto unknown. This confusion matrix is for correct/incorrect exercise techique only.
+
+```{r outcome_testing_cm3, results='asis', echo=FALSE}
+    options(xtable.comment = FALSE)
+    options(xtable.booktabs = TRUE)
+
+    cm3 <- rf_charles[['outcome_testing_houser_cm']]
+    print(xtable(cm3$table), type = 'html')
+```
+
+### Classe prediction, holdout one user
+
+The same one user holdout train/test data was used to build a prediction model for the full classe variable, all values A-E. Here is the resulting confusion matrix.
+
+
+```{r outcome_testing_cm4, results='asis', echo=FALSE}
+    options(xtable.comment = FALSE)
+    options(xtable.booktabs = TRUE)
+
+    cm4 <- rf_charles[['classe_testing_houser_correctlydone_cm']]
+    print(xtable(cm4$table), type = 'html')
+```
